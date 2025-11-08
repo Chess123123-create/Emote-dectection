@@ -1,0 +1,12 @@
+1> Tao đã thay hiển thị ảnh và kết quả sang chiều ngang thay vì chiều dọc.
+
+2>
+  Hiển thị thêm chi tiết về 7 thông số cảm xúc.
+  Từ đó dễ dàng kết luận hình ảnh thể hiển cảm xúc nào.
+
+3>
+  Trong ảnh 1/nhiều khuôn mặt thì sẽ hiển thị khuôn mặt
+  có kích thước lớn nhất màu đỏ, còn lại thì sẽ là màu xanh lá cây
+
+4>
+  Thêm cả khung nhận diện cho camere real-time
