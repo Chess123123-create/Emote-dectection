@@ -7,12 +7,12 @@
 #   - Cung cấp các câu trích dẫn vui tương ứng với cảm xúc.
 # ===============================================
 
-import threading            # Chạy các tác vụ song song
-import time                 # Đo thời gian, kiểm soát tốc độ khung hình (FPS)
-import base64               # Mã hóa ảnh thành chuỗi text (để truyền qua mạng hoặc hiển thị trên web/app)
-import cv2                  # Thư viện OpenCV – xử lý ảnh, video, camera.
-from fer.fer import FER     # Thư viện FER – phát hiện khuôn mặt và nhận diện cảm xúc.
-import numpy as np          # Xử lý ma trận, ảnh, và các phép toán tính toán nhanh.
+import threading      # Dùng để tạo luồng chạy song song (xử lý camera mà không chặn giao diện).
+import time           # Dùng để đo thời gian, kiểm soát tốc độ khung hình (FPS).
+import base64         # Dùng để mã hóa ảnh sang base64 (chuẩn truyền dữ liệu trên web/app).
+import cv2            # Thư viện OpenCV – xử lý ảnh, video, camera.
+from fer.fer import FER    # Thư viện FER – phát hiện khuôn mặt và nhận diện cảm xúc.
+import numpy as np    # Thư viện toán học – hỗ trợ xử lý ảnh, ma trận.
 
 # -------------------------------------------------
 # Khởi tạo mô hình nhận diện cảm xúc FER.
@@ -34,19 +34,15 @@ QUOTES = {
 }
 
 # -------------------------------------------------
-# Hàm này giúp chuyển ảnh thành chuỗi text, giống như gói ảnh thành dạng tin nhắn để gửi đi
+# Hàm: frame_to_base64_png
+# Mục đích: Chuyển ảnh BGR (chuẩn OpenCV) sang base64 định dạng PNG
+# để hiển thị hoặc truyền qua mạng.
+# -------------------------------------------------
 def frame_to_base64_png(frame_bgr):
-    # Mã hóa ảnh (numpy array BGR) thành file ảnh theo định dạng PNG nằm trong bộ nhớ (trả về buffer).
-    _, buf = cv2.imencode(".png", frame_bgr)
+    """Convert khung hình OpenCV (BGR) -> chuỗi base64 định dạng PNG."""
+    _, buf = cv2.imencode(".png", frame_bgr)  # Mã hóa ảnh thành định dạng PNG.
     b = buf.tobytes()                         # Chuyển buffer sang bytes.
     return base64.b64encode(b).decode("utf-8")  # Mã hóa sang base64 và trả về chuỗi UTF-8.
-
-# -------------------------------------------------
-# Hàm: get_quote_for_emotion
-# Mục đích: Lấy câu quote phù hợp với cảm xúc hiện tại.
-# -------------------------------------------------
-def get_quote_for_emotion(emotion_name):
-    return QUOTES.get(emotion_name, QUOTES["neutral"])
 
 # -------------------------------------------------
 # Hàm: detect_emotion_from_frame
@@ -55,39 +51,119 @@ def get_quote_for_emotion(emotion_name):
 # -------------------------------------------------
 def detect_emotion_from_frame(frame_bgr):
     """
-    Input: ảnh khung hình (BGR - chuẩn của OpenCV)
-    Output: (emotion_name, confidence, face_boxes, emotions_dict)
+    Input:
+        - frame_bgr: ảnh khung hình (BGR - chuẩn của OpenCV)
+    Output:
+        - emotion_name: tên cảm xúc có xác suất cao nhất
+        - confidence: độ tin cậy (0.0 - 1.0)
+        - face_boxes: danh sách tọa độ các khuôn mặt
+        - emotions_dict: dict chứa xác suất từng loại cảm xúc
     """
+    # 1️⃣ Chuyển sang RGB (FER yêu cầu ảnh RGB)
     frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-    results = _detector.detect_emotions(frame_rgb)
+
+    # 2️⃣ Dò cảm xúc bằng FER
+    try:
+        results = _detector.detect_emotions(frame_rgb)
+    except Exception as e:
+        print(f"[ERROR] detect_emotions failed: {e}")
+        return ("neutral", 0.0, [], {})
 
     if not results:
         return ("neutral", 0.0, [], {})
 
-    def area(box):
-        x, y, w, h = box
-        return w * h
+    # 3️⃣ Ưu tiên khuôn mặt có cảm xúc mạnh nhất, thay vì chỉ lớn nhất theo diện tích
+    def emotion_strength(r):
+        """Tính cảm xúc mạnh nhất của 1 khuôn mặt"""
+        em = r.get("emotions", {})
+        return max(em.values()) if em else 0.0
 
-    best = max(results, key=lambda r: area(r["box"]))
+    best = max(results, key=lambda r: emotion_strength(r))
     emotions = best.get("emotions", {})
 
+    # 4️⃣ Lấy tên và điểm cảm xúc cao nhất
     if emotions:
-        top = max(emotions.items(), key=lambda kv: kv[1])
-        name, score = top[0], float(top[1])
+        name, score = max(emotions.items(), key=lambda kv: kv[1])
     else:
         name, score = "neutral", 0.0
 
-    # Vẽ khung cho tất cả khuôn mặt, highlight khuôn mặt 'best' bằng màu đỏ
+    # 5️⃣ Vẽ khung khuôn mặt – đỏ cho “best”, xanh cho các khuôn mặt khác
     for r in results:
         x, y, w, h = r["box"]
-        # so sánh nội dung, tránh dùng `is` để an toàn
-        if r == best:
-            color = (0, 0, 255)
+        if r is best:
+            color = (0, 0, 255)  # Đỏ
         else:
-            color = (0, 255, 0)
+            color = (0, 255, 0)  # Xanh lá
         cv2.rectangle(frame_bgr, (x, y), (x + w, y + h), color, 2)
 
-    return (name, score, [best["box"]], emotions)
+    # 6️⃣ Log debug ra console
+    bx, by, bw, bh = best["box"]
+    print(f"[INFO] Face at ({bx},{by},{bw},{bh}) -> Emotion: {name} ({score:.2f})")
+
+    return (name, float(score), [best["box"]], emotions)
+
+# -------------------------------------------------
+# Lớp: CameraStreamer
+# Mục đích: Mở webcam và chạy nhận diện cảm xúc song song (đa luồng).
+# Callback được gọi mỗi khi có khung hình mới.
+# -------------------------------------------------
+class CameraStreamer:
+    """
+    Camera streamer chạy song song với luồng thread và trả về: (frame_bgr, emotion, score, boxes)
+    callback signature: fn(frame_bgr, emotion_name, score, boxes)
+    """
+    def __init__(self, camera_index=0, callback=None, fps=10):
+        self.camera_index = camera_index
+        self.callback = callback
+        self.fps = fps
+        self._running = False
+        self._thread = None
+        self.cap = None
+
+    def start(self):
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=1.0)
+        if self.cap:
+            try:
+                self.cap.release()
+            except Exception:
+                pass
+
+    def _run(self):
+        try:
+            self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
+            if not self.cap.isOpened():
+                self.cap = cv2.VideoCapture(self.camera_index)
+
+            time.sleep(0.2)
+            interval = 1.0 / max(1, self.fps)
+            while self._running:
+                t0 = time.time()
+                ret, frame = self.cap.read()
+                if not ret:
+                    time.sleep(0.1)
+                    continue
+                try:
+                    emotion, score, boxes, emotions = detect_emotion_from_frame(frame)
+                except Exception:
+                    emotion, score, boxes, emotions = "neutral", 0.0, [], {}
+                if self.callback:
+                    self.callback(frame, emotion, score, boxes)
+                dt = time.time() - t0
+                to_sleep = interval - dt
+                if to_sleep > 0:
+                    time.sleep(to_sleep)
+        finally:
+            if self.cap:
+                self.cap.release()
 
 # -------------------------------------------------
 # Hàm: detect_emotion_from_image_path
@@ -109,86 +185,8 @@ def detect_emotion_from_image_path(path):
     return img, emotion, score, boxes, emotions
 
 # -------------------------------------------------
-# Lớp: CameraStreamer
-# Mục đích: Mở webcam và chạy nhận diện cảm xúc song song (đa luồng).
-# Callback được gọi mỗi khi có khung hình mới.
+# Hàm: get_quote_for_emotion
+# Mục đích: Lấy câu quote phù hợp với cảm xúc hiện tại.
 # -------------------------------------------------
-class CameraStreamer:
-    """
-    Camera streamer chạy song song với luồng thread và trả về:
-    (frame_bgr, emotion_name, score, boxes)
-    callback signature: fn(frame_bgr, emotion_name, score, boxes)
-    """
-
-    def __init__(self, camera_index=0, callback=None, fps=10):
-        self.camera_index = camera_index  # Số thứ tự camera (0 là mặc định).
-        self.callback = callback          # Hàm xử lý kết quả mỗi khung hình.
-        self.fps = fps                    # Số khung hình xử lý mỗi giây.
-        self._running = False             # Trạng thái chạy/dừng.
-        self._thread = None               # Thread xử lý nền.
-        self.cap = None                   # Đối tượng camera OpenCV.
-
-    # -------------------------------------------------
-    # Bắt đầu luồng camera.
-    # -------------------------------------------------
-    def start(self):
-        if self._running:
-            return  # Nếu đang chạy rồi thì không làm lại.
-        self._running = True
-        # Tạo luồng chạy song song (daemon=True: tự dừng khi chương trình kết thúc).
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
-
-    # -------------------------------------------------
-    # Dừng luồng camera.
-    # -------------------------------------------------
-    def stop(self):
-        self._running = False
-        if self._thread:
-            self._thread.join(timeout=1.0)  # Đợi thread kết thúc.
-        if self.cap:
-            try:
-                self.cap.release()          # Giải phóng camera.
-            except Exception:
-                pass
-
-    # -------------------------------------------------
-    # Hàm chạy nền: đọc khung hình, nhận diện cảm xúc, gọi callback.
-    # -------------------------------------------------
-    def _run(self):
-        try:
-            # Mở camera (CAP_DSHOW dùng cho Windows để tránh cảnh báo).
-            self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
-            if not self.cap.isOpened():
-                self.cap = cv2.VideoCapture(self.camera_index)
-
-            time.sleep(0.2)                      # Đợi camera ổn định.
-            interval = 1.0 / max(1, self.fps)    # Tính thời gian giữa 2 khung hình theo FPS.
-
-            while self._running:                 # Vòng lặp chính.
-                t0 = time.time()
-                ret, frame = self.cap.read()      # Đọc 1 khung hình.
-                if not ret:                       # Nếu lỗi, thử lại sau 0.1s.
-                    time.sleep(0.1)
-                    continue
-
-            try:
-                # Nhận diện cảm xúc trên khung hình.
-                emotion, score, boxes, emotions = detect_emotion_from_frame(frame)
-            except Exception:
-                emotion, score, boxes = "neutral", 0.0, []
-
-                # Nếu có callback, gọi để gửi dữ liệu ra ngoài (VD: cập nhật UI).
-                if self.callback:
-                    self.callback(frame, emotion, score, boxes)
-
-                # Điều chỉnh tốc độ để đạt FPS mong muốn.
-                dt = time.time() - t0
-                to_sleep = interval - dt
-                if to_sleep > 0:
-                    time.sleep(to_sleep)
-
-        finally:
-            # Đảm bảo luôn giải phóng camera khi dừng.
-            if self.cap:
-                self.cap.release()
+def get_quote_for_emotion(emotion_name):
+    return QUOTES.get(emotion_name, QUOTES["neutral"])
