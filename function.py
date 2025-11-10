@@ -2,7 +2,6 @@
 # function.py (update ổn định)
 # -----------------------------------------------
 # Nhận diện cảm xúc (real-time + ảnh tĩnh)
-# Đã fix:
 #   - Nhận diện nhiều mặt trong ảnh tĩnh
 #   - Vẽ khung xanh cho khuôn mặt lớn nhất/rõ nhất
 #   - Giữ smoothing + hysteresis
@@ -175,9 +174,6 @@ class CameraStreamer:
             if self.cap:
                 self.cap.release()
 
-# -------------------------------------------------
-# Nhận diện cảm xúc từ ảnh tĩnh (fix chọn best face)
-# -------------------------------------------------
 def detect_emotion_from_image_path(path):
     img = cv2.imread(path)
     if img is None:
@@ -203,3 +199,4 @@ def detect_emotion_from_image_path(path):
 # -------------------------------------------------
 def get_quote_for_emotion(emotion_name):
     return QUOTES.get(emotion_name, QUOTES["neutral"])
+
